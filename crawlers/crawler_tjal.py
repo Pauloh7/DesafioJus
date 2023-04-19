@@ -137,9 +137,10 @@ class CrawlerTjal:
                             else:
                                 movimento_completo = tipo_movimento
                             movimentos.append([data, movimento_completo])
-                    except Exception as e:
-                        print(e)
+                    except Exception as exc:
+                        logger.exception(exc)
                         movimentos = None
+                        raise
 
         return movimentos
 
@@ -171,8 +172,9 @@ class CrawlerTjal:
             movimentos = self.extract_movimentos(pagina)
 
             print(juiz)
-        except Exception as exe:
-            print(exe)
+        except Exception as exc:
+            logger.exception(exc)
+            raise
 
 
 if __name__ == "__main__":
