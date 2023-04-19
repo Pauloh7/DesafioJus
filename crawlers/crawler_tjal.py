@@ -1,3 +1,4 @@
+from datetime import datetime
 import logging
 import re
 import requests
@@ -17,19 +18,33 @@ class CrawlerTjal:
 
     Attributes:
         browser (str): This is where we store arg,
+
+
     """
-    def remove_special_characters(self,texto):
+
+    def __init__(self):
+        self.timeout = 1000
+        self.urlconsulta = "https://www2.tjal.jus.br/cpopg/show.do?processo.numero="
+
+    def remove_blank_space(self, txt):
+        """"""
+        array = txt.split()
+        return " ".join(array).strip()
+
+    def remove_special_characters(self, texto):
+        """"""
         texto_corrigido = texto
         texto_corrigido = re.sub(
-            "[\\\/,;<>\.\?\/\!\*\-\+\_\=\@\#%:\(\)" "]+", "", texto_corrigido
+            r"[\\\/,;<>\.\?\/\!\*\-\+\_\=\@\#%:\(\)" "]+", "", texto_corrigido
         )
-        texto_corrigido = re.sub("\(\)", "", texto_corrigido)
-        texto_corrigido = re.sub("\s{2,}", " ", texto_corrigido)
-        texto_corrigido = re.sub("^\s+", "", texto_corrigido)
-        texto_corrigido = re.sub("\s+$", "", texto_corrigido)
+        texto_corrigido = re.sub(r"\(\)", "", texto_corrigido)
+        texto_corrigido = re.sub(r"\s{2,}", " ", texto_corrigido)
+        texto_corrigido = re.sub(r"^\s+", "", texto_corrigido)
+        texto_corrigido = re.sub(r"\s+$", "", texto_corrigido)
         return texto_corrigido
-    
+
     def extract_partes(self, pagina):
+        """"""
         tipo_parte = "NAO_INFORMADO"
         nome_parte = "NAO_INFORMADO"
         if pagina.find("table", {"id": "tableTodasPartes"}):
@@ -51,7 +66,9 @@ class CrawlerTjal:
             lista_advogados = []
             if len(td) == 0:
                 continue
-            if len(td) == 2 and not "ADVOGAD" in self.remove_special_characters(td[0].text):
+            if len(td) == 2 and not "ADVOGAD" in self.remove_special_characters(
+                td[0].text
+            ):
                 tipo_parte = self.remove_special_characters(td[0].text)
                 nome_parte = self.remove_special_characters(td[1].next)
                 if len(td[1].find_all("span")) >= 1:
@@ -68,11 +85,63 @@ class CrawlerTjal:
             partes_list.append([tipo_parte, nome_parte, lista_advogados])
         return partes_list
 
-    def __init__(self):
-        self.browser = None
-        self.timeout = 1000
-        self.urlconsulta = "https://www2.tjal.jus.br/cpopg/show.do?processo.numero="
-        self.headers = None
+    def extract_movimentos(self, pagina):
+        julgamento_movimento = False
+        movimentos = []
+        movimentacao = pagina.find(
+            "h2", text=re.compile(".*Movimentações.*", re.IGNORECASE)
+        )
+        if movimentacao:
+            movimentacao = movimentacao.find_parent("div")
+            if movimentacao:
+                movimentacao = movimentacao.find_next_sibling("table")
+                if (
+                    self.remove_blank_space(movimentacao.text)
+                    == "Não há Movimentações para este processo."
+                ):
+                    movimentacao = None
+                    return movimentacao
+                else:
+                    try:
+                        lista_movimentos = pagina.find(
+                            "tbody", {"id": "tabelaTodasMovimentacoes"}
+                        ).find_all("tr", {"class": "containerMovimentacao"})
+                        for linha in lista_movimentos:
+                            data = datetime.strptime(
+                                self.remove_blank_space(
+                                    linha.find(
+                                        "td", attrs={"class": "dataMovimentacao"}
+                                    ).text
+                                ),
+                                "%d/%m/%Y",
+                            )
+                            movimento = linha.find(
+                                "td", {"class": "descricaoMovimentacao"}
+                            )
+
+                            if movimento.find("a"):
+                                tipo_movimento = self.remove_special_characters(
+                                    movimento.find("a").text
+                                )
+                            else:
+                                tipo_movimento = self.remove_special_characters(
+                                    movimento.next
+                                )
+                            texto_movimento = self.remove_special_characters(
+                                linha.find("span").text
+                            )
+                            if texto_movimento:
+                                movimento_completo = (
+                                    tipo_movimento + " " + texto_movimento
+                                )
+                            else:
+                                movimento_completo = tipo_movimento
+                            movimentos.append([data, movimento_completo])
+                    except Exception as e:
+                        print(e)
+                        movimentos = None
+
+        return movimentos
 
     @retry(wait=wait_fixed(1), stop=stop_after_attempt(5))
     def extract_processo_info_primeira_instancia(self, npu: str) -> str:
@@ -99,15 +168,11 @@ class CrawlerTjal:
                 .replace(" ", "")
             )
             partes_list = self.extract_partes(pagina)
+            movimentos = self.extract_movimentos(pagina)
 
             print(juiz)
         except Exception as exe:
             print(exe)
-
-    
-
-
-
 
 
 if __name__ == "__main__":
