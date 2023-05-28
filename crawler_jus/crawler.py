@@ -1,8 +1,8 @@
 import logging
 import re
-import requests
-from util import remove_blank_space,remove_special_characters
 from datetime import datetime
+import requests
+from util import remove_blank_space, remove_special_characters
 from bs4 import BeautifulSoup as bs
 from tenacity import (
     retry,
@@ -13,7 +13,7 @@ from tenacity import (
 logger = logging.getLogger()
 
 
-class CrawlerTjal:
+class Crawler:
     """
     Robo que extrai dados do site TJAL(Tribunal de Justiça do Estado de Alagoas)
 
@@ -27,7 +27,15 @@ class CrawlerTjal:
         self.timeout = 1000
         self.urlconsulta = "https://www2.tjal.jus.br/cpopg/show.do?processo.numero="
 
-    def extract_partes(self, pagina):
+    def send_request (self, dominio: str, foro: str, npu: str) -> bs:
+        session = requests.Session()
+        data = session.get(
+            f"{self.urlconsulta}{npu}", verify=False, timeout=self.timeout
+        )
+        pagina = bs(data.content, features="html.parser")
+        return pagina
+
+    def extract_partes(self, pagina: bs) -> list[str,str,list]:
         """"""
         tipo_parte = "NAO_INFORMADO"
         nome_parte = "NAO_INFORMADO"
@@ -67,8 +75,8 @@ class CrawlerTjal:
             partes_list.append([tipo_parte, nome_parte, lista_advogados])
         return partes_list
 
-    def extract_movimentos(self, pagina):
-        julgamento_movimento = False
+    def extract_movimentos(self, pagina: bs) -> list[str,str]:
+        ''''''
         movimentos = []
         movimentacao = pagina.find(
             "h2", string=re.compile(".*Movimentações.*", re.IGNORECASE)
@@ -127,14 +135,9 @@ class CrawlerTjal:
         return movimentos
 
     @retry(wait=wait_fixed(1), stop=stop_after_attempt(5))
-    def extract_processo_info_primeira_instancia(self, npu: str) -> str:
+    def extract_processo_info(self, npu: str) -> dict:
         """ """
-
-        session = requests.Session()
-        data = session.get(
-            f"{self.urlconsulta}{npu}", verify=False, timeout=self.timeout
-        )
-        pagina = bs(data.content, features="html.parser")
+        pagina = self.send_request()
         try:
             classe = pagina.find("span", {"id": "classeProcesso"}).get_text(strip=True)
             area = pagina.find("div", {"id": "areaProcesso"}).get_text(strip=True)
@@ -153,7 +156,16 @@ class CrawlerTjal:
             partes_list = self.extract_partes(pagina)
             movimentos = self.extract_movimentos(pagina)
 
-            print(juiz)
+            return {
+                "classe" : classe if classe else "",
+                "area" : area if area else "",
+                "assunto" : assunto if assunto else "",
+                "data_distribuicao" : data_distribuicao if data_distribuicao else "",
+                "juiz" : juiz if juiz else "",
+                "valor_da_acao" : valor_da_acao if valor_da_acao else "",
+                "partes" : partes_list,
+                "movimentos" : movimentos
+            }
         except Exception as exc:
             logger.exception(exc)
             raise
@@ -163,4 +175,4 @@ if __name__ == "__main__":
     robo = CrawlerTjal()
     # 07108025520188020001
     # 07114332320238020001
-    robo.extract_processo_info_primeira_instancia("07108025520188020001")
+    robo.extract_processo_info("07108025520188020001")
