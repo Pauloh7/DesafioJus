@@ -1,7 +1,8 @@
-from datetime import datetime
 import logging
 import re
 import requests
+from app.util import remove_blank_space,remove_special_characters
+from datetime import datetime
 from bs4 import BeautifulSoup as bs
 from tenacity import (
     retry,
@@ -17,32 +18,15 @@ class CrawlerTjal:
     Robo que extrai dados do site TJAL(Tribunal de Justiça do Estado de Alagoas)
 
     Attributes:
-        browser (str): This is where we store arg,
-
+        timeout (int): Padrao de timeout para tentativas de conexao
+        urlconsutla (str): Url de consulta de processos de alagoas primeira instancia
 
     """
 
     def __init__(self):
         self.timeout = 1000
         self.urlconsulta = "https://www2.tjal.jus.br/cpopg/show.do?processo.numero="
-
-    def remove_blank_space(self, txt):
-        """"""
-        array = txt.split()
-        return " ".join(array).strip()
-
-    def remove_special_characters(self, texto):
-        """"""
-        texto_corrigido = texto
-        texto_corrigido = re.sub(
-            r"[\\\/,;<>\.\?\/\!\*\-\+\_\=\@\#%:\(\)" "]+", "", texto_corrigido
-        )
-        texto_corrigido = re.sub(r"\(\)", "", texto_corrigido)
-        texto_corrigido = re.sub(r"\s{2,}", " ", texto_corrigido)
-        texto_corrigido = re.sub(r"^\s+", "", texto_corrigido)
-        texto_corrigido = re.sub(r"\s+$", "", texto_corrigido)
-        return texto_corrigido
-
+               
     def extract_partes(self, pagina):
         """"""
         tipo_parte = "NAO_INFORMADO"
@@ -66,20 +50,20 @@ class CrawlerTjal:
             lista_advogados = []
             if len(td) == 0:
                 continue
-            if len(td) == 2 and not "ADVOGAD" in self.remove_special_characters(
+            if len(td) == 2 and not "ADVOGAD" in remove_special_characters(
                 td[0].text
             ):
-                tipo_parte = self.remove_special_characters(td[0].text)
-                nome_parte = self.remove_special_characters(td[1].next)
+                tipo_parte = remove_special_characters(td[0].text)
+                nome_parte = remove_special_characters(td[1].next)
                 if len(td[1].find_all("span")) >= 1:
                     for advs in td[1].find_all("span"):
                         lista_advogados.append(
                             "Advogado(a): "
-                            + self.remove_special_characters(advs.next_sibling)
+                            + remove_special_characters(advs.next_sibling)
                         )
             else:
                 lista_advogados.append(
-                    "Advogado(a): " + self.remove_special_characters(td[1].text)
+                    "Advogado(a): " + remove_special_characters(td[1].text)
                 )
 
             partes_list.append([tipo_parte, nome_parte, lista_advogados])
@@ -96,7 +80,7 @@ class CrawlerTjal:
             if movimentacao:
                 movimentacao = movimentacao.find_next_sibling("table")
                 if (
-                    self.remove_blank_space(movimentacao.text)
+                    remove_blank_space(movimentacao.text)
                     == "Não há Movimentações para este processo."
                 ):
                     movimentacao = None
@@ -108,7 +92,7 @@ class CrawlerTjal:
                         ).find_all("tr", {"class": "containerMovimentacao"})
                         for linha in lista_movimentos:
                             data = datetime.strptime(
-                                self.remove_blank_space(
+                                    remove_blank_space(
                                     linha.find(
                                         "td", attrs={"class": "dataMovimentacao"}
                                     ).text
@@ -120,14 +104,14 @@ class CrawlerTjal:
                             )
 
                             if movimento.find("a"):
-                                tipo_movimento = self.remove_special_characters(
+                                tipo_movimento = remove_special_characters(
                                     movimento.find("a").text
                                 )
                             else:
-                                tipo_movimento = self.remove_special_characters(
+                                tipo_movimento = remove_special_characters(
                                     movimento.next
                                 )
-                            texto_movimento = self.remove_special_characters(
+                            texto_movimento = remove_special_characters(
                                 linha.find("span").text
                             )
                             if texto_movimento:
