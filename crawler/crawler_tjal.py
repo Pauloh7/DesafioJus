@@ -1,7 +1,7 @@
 import logging
 import re
 import requests
-from app.util import remove_blank_space,remove_special_characters
+from util import remove_blank_space,remove_special_characters
 from datetime import datetime
 from bs4 import BeautifulSoup as bs
 from tenacity import (
@@ -26,7 +26,7 @@ class CrawlerTjal:
     def __init__(self):
         self.timeout = 1000
         self.urlconsulta = "https://www2.tjal.jus.br/cpopg/show.do?processo.numero="
-               
+
     def extract_partes(self, pagina):
         """"""
         tipo_parte = "NAO_INFORMADO"
@@ -50,9 +50,7 @@ class CrawlerTjal:
             lista_advogados = []
             if len(td) == 0:
                 continue
-            if len(td) == 2 and not "ADVOGAD" in remove_special_characters(
-                td[0].text
-            ):
+            if len(td) == 2 and not "ADVOGAD" in remove_special_characters(td[0].text):
                 tipo_parte = remove_special_characters(td[0].text)
                 nome_parte = remove_special_characters(td[1].next)
                 if len(td[1].find_all("span")) >= 1:
@@ -73,7 +71,7 @@ class CrawlerTjal:
         julgamento_movimento = False
         movimentos = []
         movimentacao = pagina.find(
-            "h2", text=re.compile(".*Movimentações.*", re.IGNORECASE)
+            "h2", string=re.compile(".*Movimentações.*", re.IGNORECASE)
         )
         if movimentacao:
             movimentacao = movimentacao.find_parent("div")
@@ -92,7 +90,7 @@ class CrawlerTjal:
                         ).find_all("tr", {"class": "containerMovimentacao"})
                         for linha in lista_movimentos:
                             data = datetime.strptime(
-                                    remove_blank_space(
+                                remove_blank_space(
                                     linha.find(
                                         "td", attrs={"class": "dataMovimentacao"}
                                     ).text
