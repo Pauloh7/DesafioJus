@@ -25,17 +25,24 @@ class Crawler:
 
     def __init__(self):
         self.timeout = 1000
-        self.urlconsulta = "https://www2.tjal.jus.br/cpopg/show.do?processo.numero="
+        self.urlconsulta_AL = "https://www2.tjal.jus.br/cpopg/show.do?processo.numero="
+        self.urlconsulta_AL_segunda_instancia = "https://www2.tjal.jus.br/cposg5/search.do?conversationId=&paginaConsulta=0&cbPesquisa=NUMPROC&numeroDigitoAnoUnificado=&foroNumeroUnificado=&dePesquisaNuUnificado=&dePesquisaNuUnificado=UNIFICADO&dePesquisa={npu}&tipoNuProcesso=SAJ"
 
-    def send_request (self, dominio: str, foro: str, npu: str) -> bs:
+    def send_request(self, npu: str, tribunal: str) -> bs:
         session = requests.Session()
-        data = session.get(
+        if tribunal == "02":
+            data = session.get(
             f"{self.urlconsulta}{npu}", verify=False, timeout=self.timeout
         )
+        elif tribunal == "06":
+            data = session.get(
+            f"{self.urlconsulta}{npu}", verify=False, timeout=self.timeout
+        )
+        
         pagina = bs(data.content, features="html.parser")
         return pagina
 
-    def extract_partes(self, pagina: bs) -> list[str,str,list]:
+    def extract_partes(self, pagina: bs) -> list[str, str, list]:
         """"""
         tipo_parte = "NAO_INFORMADO"
         nome_parte = "NAO_INFORMADO"
@@ -75,8 +82,8 @@ class Crawler:
             partes_list.append([tipo_parte, nome_parte, lista_advogados])
         return partes_list
 
-    def extract_movimentos(self, pagina: bs) -> list[str,str]:
-        ''''''
+    def extract_movimentos(self, pagina: bs) -> list[str, str]:
+        """"""
         movimentos = []
         movimentacao = pagina.find(
             "h2", string=re.compile(".*Movimentações.*", re.IGNORECASE)
@@ -135,9 +142,9 @@ class Crawler:
         return movimentos
 
     @retry(wait=wait_fixed(1), stop=stop_after_attempt(5))
-    def extract_processo_info(self, npu: str) -> dict:
+    def extract_processo_info(self, npu: str, tribunal: str) -> dict:
         """ """
-        pagina = self.send_request()
+        pagina = self.send_request(npu, tribunal)
         try:
             classe = pagina.find("span", {"id": "classeProcesso"}).get_text(strip=True)
             area = pagina.find("div", {"id": "areaProcesso"}).get_text(strip=True)
@@ -157,14 +164,14 @@ class Crawler:
             movimentos = self.extract_movimentos(pagina)
 
             return {
-                "classe" : classe if classe else "",
-                "area" : area if area else "",
-                "assunto" : assunto if assunto else "",
-                "data_distribuicao" : data_distribuicao if data_distribuicao else "",
-                "juiz" : juiz if juiz else "",
-                "valor_da_acao" : valor_da_acao if valor_da_acao else "",
-                "partes" : partes_list,
-                "movimentos" : movimentos
+                "classe": classe if classe else "",
+                "area": area if area else "",
+                "assunto": assunto if assunto else "",
+                "data_distribuicao": data_distribuicao if data_distribuicao else "",
+                "juiz": juiz if juiz else "",
+                "valor_da_acao": valor_da_acao if valor_da_acao else "",
+                "partes": partes_list,
+                "movimentos": movimentos,
             }
         except Exception as exc:
             logger.exception(exc)
