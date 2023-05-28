@@ -18,8 +18,9 @@ async def search_cpf(cliente: schema.ClienteInput) -> dict:
 
     try:
         crawler = Crawler()
-        if numero_beneficio := robo.extract_cpf_info(
-            cliente.cpf, cliente.login, cliente.senha
+        cliente.npu
+        
+        if numero_beneficio := crawler.extract_processo_info(
         ):
             return {"numero_do_beneficio": numero_beneficio}
 
