@@ -2,17 +2,30 @@ import logging
 import re
 from datetime import datetime
 import requests
-
-from util import remove_blank_space, remove_special_characters, extract_tribunal
 from bs4 import BeautifulSoup as bs
 from tenacity import (
     retry,
     wait_fixed,
     stop_after_attempt,
 )
+from crawler_jus.util import remove_blank_space, remove_special_characters, extract_tribunal
+
+
 
 logger = logging.getLogger()
 
+class Processo:
+    def __init__(self, npu,grau, juiz, assunto, classe, area, data_distribuicao, valor_da_acao, partes, movimentos ):
+        self.npu = npu
+        self.grau = grau
+        self.juiz = juiz
+        self.assunto = assunto
+        self.classe = classe
+        self.area = area
+        self.data_distribuicao = data_distribuicao
+        self.valor_da_acao = valor_da_acao
+        self.partes = partes
+        self.movimentacoes = movimentos
 
 class Crawler:
     """
@@ -41,10 +54,10 @@ class Crawler:
         return codigo_processo
 
     @retry(wait=wait_fixed(1), stop=stop_after_attempt(5))
-    def send_request_primeiro_grau(self, npu: str, tribunal: str) -> bs:
+    async def send_request_primeiro_grau(self, npu: str, tribunal: str) -> Processo:
         session = requests.Session()
+        grau = "1"
         if tribunal == "02":
-            grau = 1
             pagina_primeiro_grau = session.get(
                 f"{self.urlconsulta_AL_primeiro_grau}{npu}", verify=False, timeout=self.timeout
             )
@@ -59,15 +72,25 @@ class Crawler:
                 soup_pagina_primeiro_grau, npu, grau
             )
 
-        # elif tribunal == "06":
-        #     data = session.get(
-        #     f"{self.urlconsulta}{npu}", verify=False, timeout=self.timeout
-        # )
+        elif tribunal == "06":
+            pagina_primeiro_grau = session.get(
+                f"{self.urlconsulta_CE_primeiro_grau}{npu}", verify=False, timeout=self.timeout
+            )
+            soup_pagina_primeiro_grau = bs(
+                pagina_primeiro_grau.content, features="html.parser"
+            )
+
+            if soup_pagina_primeiro_grau("td", id="mensagemRetorno"):
+                soup_pagina_primeiro_grau = None
+
+            primeiro_grau_processo_info = self.extract_processo_info(
+                soup_pagina_primeiro_grau, npu, grau
+            )
 
         return primeiro_grau_processo_info
 
     @retry(wait=wait_fixed(1), stop=stop_after_attempt(5))
-    def send_request_segundo_grau(self, npu: str, tribunal: str) -> bs:
+    async def send_request_segundo_grau(self, npu: str, tribunal: str) -> Processo:
         grau = "2"
         session = requests.Session()
         if tribunal == "02":
@@ -91,10 +114,32 @@ class Crawler:
                 soup_pagina_segundo_grau = bs(
                     pagina_segundo_grau.content, features="html.parser"
                 )
+        elif tribunal == "06":
+            pagina_segundo_grau = session.get(
+                f"{self.urlconsulta_CE_segundo_grau_1}{npu}",
+                verify=False,
+                timeout=self.timeout,
+            )
+            soup_pagina_segundo_grau = bs(
+                pagina_segundo_grau.content, features="html.parser"
+            )
+            if soup_pagina_segundo_grau.find("td", id="mensagemRetorno"):
+                soup_pagina_segundo_grau = None
+            elif soup_pagina_segundo_grau.find("input", id="processoSelecionado"):
+                codigo = self.get_codigo_segunda_instancia(soup_pagina_segundo_grau)
+                pagina_segundo_grau = session.get(
+                    f"{self.urlconsulta_CE_segundo_grau_2}{codigo}",
+                    verify=False,
+                    timeout=self.timeout,
+                )
+                soup_pagina_segundo_grau = bs(
+                    pagina_segundo_grau.content, features="html.parser"
+                )
 
         segundo_grau_processo_info = self.extract_processo_info(
             soup_pagina_segundo_grau, npu, grau
         )
+        
         return segundo_grau_processo_info
 
     def extract_partes(self, pagina: bs) -> list[str, str, list]:
@@ -197,10 +242,10 @@ class Crawler:
         return movimentos
 
     def extract_processo_info(self, pagina: bs, npu: str, grau: str) -> dict:
-        # todo scraping segundo grau
+        #TODO arrumar scraping de movimentos do segundo grau SAJ mudou
         """ """
         try:
-            if grau == 1:
+            if grau == "1":
                 classe = pagina.find("span", {"id": "classeProcesso"}).get_text(
                     strip=True
                 )
@@ -225,26 +270,18 @@ class Crawler:
                 juiz = pagina.find("span", {"id": "juizProcesso"}).get_text(strip=True)
             else:
                 juiz=''
-            valor_da_acao = (
-                pagina.find("div", {"id": "valorAcaoProcesso"})
-                .get_text(strip=True)
-                .replace(" ", "")
-            )
+            if pagina.find("div", {"id": "valorAcaoProcesso"}) is not None:
+                valor_da_acao = (
+                    pagina.find("div", {"id": "valorAcaoProcesso"})
+                    .get_text(strip=True)
+                    .replace(" ", "")
+                )
+            else:
+                valor_da_acao = ""    
             partes_list = self.extract_partes(pagina)
             movimentos = self.extract_movimentos(pagina)
 
-            return {
-                "npu": npu if npu else "",
-                "classe": classe if classe else "",
-                "area": area if area else "",
-                "assunto": assunto if assunto else "",
-                "data_distribuicao": data_distribuicao if data_distribuicao else "",
-                "juiz": juiz if juiz else "",
-                "valor_da_acao": valor_da_acao if valor_da_acao else "",
-                "partes": partes_list,
-                "movimentos": movimentos,
-                "grau": grau if grau else "",
-            }
+            return Processo(npu,grau,juiz,assunto,classe,area,data_distribuicao,valor_da_acao,partes_list,movimentos) 
         except Exception as exc:
             logger.exception(exc)
             raise

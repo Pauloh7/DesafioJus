@@ -26,7 +26,7 @@ def extract_tribunal(npu:str) -> str:
         return tribunal
 
 
-def valida_numero_processo(npu):
+def valida_npu(npu):
     '''
     Função para validar o número do processo judicial utilizando o algoritmo Módulo 97, Base 10, ISO 7064
 
