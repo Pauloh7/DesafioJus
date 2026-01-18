@@ -1,31 +1,25 @@
 import logging
 import re
+import asyncio
+import httpx
 from datetime import datetime
-import requests
 from bs4 import BeautifulSoup as bs
 from tenacity import (
     retry,
     wait_fixed,
     stop_after_attempt,
 )
-from crawler_jus.util import remove_blank_space, remove_special_characters, extract_tribunal
-
+from util import (
+    remove_blank_space,
+    remove_special_characters,
+    extract_tribunal,
+)
+from processo import *
+from curl_cffi.requests import AsyncSession
 
 
 logger = logging.getLogger()
 
-class Processo:
-    def __init__(self, npu,grau, juiz, assunto, classe, area, data_distribuicao, valor_da_acao, partes, movimentos ):
-        self.npu = npu
-        self.grau = grau
-        self.juiz = juiz
-        self.assunto = assunto
-        self.classe = classe
-        self.area = area
-        self.data_distribuicao = data_distribuicao
-        self.valor_da_acao = valor_da_acao
-        self.partes = partes
-        self.movimentacoes = movimentos
 
 class Crawler:
     """
@@ -38,14 +32,38 @@ class Crawler:
     """
 
     def __init__(self):
-        self.timeout = 1000
-        self.urlconsulta_AL_primeiro_grau = "https://www2.tjal.jus.br/cpopg/show.do?processo.numero="
-        self.urlconsulta_AL_segundo_grau_1 = "https://www2.tjal.jus.br/cposg5/search.do?conversationId=&paginaConsulta=0&cbPesquisa=NUMPROC&numeroDigitoAnoUnificado=&foroNumeroUnificado=&dePesquisaNuUnificado=&dePesquisaNuUnificado=UNIFICADO&dePesquisa="
-        self.urlconsulta_AL_segundo_grau_2 = "https://www2.tjal.jus.br/cposg5/show.do?processo.codigo="
-        self.urlconsulta_CE_primeiro_grau = "https://esaj.tjce.jus.br/cpopg/show.do?processo.codigo=01Z081I9T0000&processo.foro=1&processo.numero="
-        self.urlconsulta_CE_segundo_grau_1 ="https://esaj.tjce.jus.br/cposg5/search.do;jsessionid=0430EE14DC7E5B016D9DD345C461DD55.cposg3?conversationId=&paginaConsulta=0&cbPesquisa=NUMPROC&numeroDigitoAnoUnificado=&foroNumeroUnificado=&dePesquisaNuUnificado=&dePesquisaNuUnificado=UNIFICADO&dePesquisa="
-        self.urlconsulta_CE_segundo_grau_2 = "https://esaj.tjce.jus.br/cposg5/show.do?processo.codigo="
+        self.timeout = httpx.Timeout(30.0)
+        self.client = AsyncSession(
+            impersonate="chrome120",
+            timeout=30,
+            verify=False,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0 Safari/537.36"
+                ),
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+                "Connection": "keep-alive",
+                "Upgrade-Insecure-Requests": "1",
+            },
+        )
+        # ===== TJAL =====
+        self.urlconsulta_AL_primeiro_grau = "https://www2.tjal.jus.br/cpopg/show.do"
+        self.urlconsulta_AL_segundo_grau_1 = "https://www2.tjal.jus.br/cposg5/search.do"
+        self.urlconsulta_AL_segundo_grau_2 = "https://www2.tjal.jus.br/cposg5/show.do"
 
+        # ===== TJCE =====
+        self.urlconsulta_CE_open = "https://esaj.tjce.jus.br/cpopg/open.do"
+        self.urlconsulta_CE_primeiro_grau = "https://esaj.tjce.jus.br/cpopg/show.do"
+
+        self.urlconsulta_CE_segundo_grau_1 = "https://esaj.tjce.jus.br/cposg5/search.do"
+        self.urlconsulta_CE_segundo_grau_2 = "https://esaj.tjce.jus.br/cposg5/show.do"
+
+    async def aclose(self):
+        await self.client.aclose()
+    
     def get_codigo_segunda_instancia(self, pagina_segundo_grau: bs) -> str:
         codigo_processo = pagina_segundo_grau.find(
             "input", id="processoSelecionado"
@@ -53,16 +71,17 @@ class Crawler:
 
         return codigo_processo
 
-    @retry(wait=wait_fixed(1), stop=stop_after_attempt(5))
+    @retry(wait=wait_fixed(1), stop=stop_after_attempt(5), reraise=True)
     async def send_request_primeiro_grau(self, npu: str, tribunal: str) -> Processo:
-        session = requests.Session()
         grau = "1"
         if tribunal == "02":
-            pagina_primeiro_grau = session.get(
-                f"{self.urlconsulta_AL_primeiro_grau}{npu}", verify=False, timeout=self.timeout
+            pagina_primeiro_grau = await self.client.get(
+                self.urlconsulta_AL_primeiro_grau,
+                params={"processo.numero": npu},
             )
+            pagina_primeiro_grau.raise_for_status()
             soup_pagina_primeiro_grau = bs(
-                pagina_primeiro_grau.content, features="html.parser"
+                pagina_primeiro_grau.text, features="html.parser"
             )
 
             if soup_pagina_primeiro_grau("td", id="mensagemRetorno"):
@@ -73,13 +92,14 @@ class Crawler:
             )
 
         elif tribunal == "06":
-            pagina_primeiro_grau = session.get(
-                f"{self.urlconsulta_CE_primeiro_grau}{npu}", verify=False, timeout=self.timeout
+            pagina_primeiro_grau = await self.client.get(
+                self.urlconsulta_CE_primeiro_grau,
+                params={"processo.numero": npu},
             )
+            pagina_primeiro_grau.raise_for_status()
             soup_pagina_primeiro_grau = bs(
-                pagina_primeiro_grau.content, features="html.parser"
+                pagina_primeiro_grau.text, features="html.parser"
             )
-
             if soup_pagina_primeiro_grau("td", id="mensagemRetorno"):
                 soup_pagina_primeiro_grau = None
 
@@ -89,57 +109,73 @@ class Crawler:
 
         return primeiro_grau_processo_info
 
-    @retry(wait=wait_fixed(1), stop=stop_after_attempt(5))
+    @retry(wait=wait_fixed(1), stop=stop_after_attempt(5), reraise=True)
     async def send_request_segundo_grau(self, npu: str, tribunal: str) -> Processo:
         grau = "2"
-        session = requests.Session()
         if tribunal == "02":
-            pagina_segundo_grau = session.get(
-                f"{self.urlconsulta_AL_segundo_grau_1}{npu}",
-                verify=False,
-                timeout=self.timeout,
+            pagina_segundo_grau = await self.client.get(
+                self.urlconsulta_AL_segundo_grau_1,
+                params={
+                    "paginaConsulta": "0",
+                    "cbPesquisa": "NUMPROC",
+                    "dePesquisaNuUnificado": "UNIFICADO",
+                    "dePesquisa": npu,
+                },
             )
+            pagina_segundo_grau.raise_for_status()
             soup_pagina_segundo_grau = bs(
-                pagina_segundo_grau.content, features="html.parser"
+                pagina_segundo_grau.text, features="html.parser"
             )
             if soup_pagina_segundo_grau.find("td", id="mensagemRetorno"):
                 soup_pagina_segundo_grau = None
             elif soup_pagina_segundo_grau.find("input", id="processoSelecionado"):
                 codigo = self.get_codigo_segunda_instancia(soup_pagina_segundo_grau)
-                pagina_segundo_grau = session.get(
-                    f"{self.urlconsulta_AL_segundo_grau_2}{codigo}",
-                    verify=False,
-                    timeout=self.timeout,
+                pagina_segundo_grau = await self.client.get(
+                self.urlconsulta_AL_segundo_grau_1,
+                params={
+                    "paginaConsulta": "0",
+                    "cbPesquisa": "NUMPROC",
+                    "dePesquisaNuUnificado": "UNIFICADO",
+                    "dePesquisa": codigo,
+                },
                 )
+                pagina_segundo_grau.raise_for_status()
                 soup_pagina_segundo_grau = bs(
-                    pagina_segundo_grau.content, features="html.parser"
+                    pagina_segundo_grau.text, features="html.parser"
                 )
         elif tribunal == "06":
-            pagina_segundo_grau = session.get(
-                f"{self.urlconsulta_CE_segundo_grau_1}{npu}",
-                verify=False,
-                timeout=self.timeout,
+            pagina_segundo_grau = await self.client.get(
+                self.urlconsulta_CE_segundo_grau_1,
+                params={
+                    "paginaConsulta": "0",
+                    "cbPesquisa": "NUMPROC",
+                    "dePesquisaNuUnificado": "UNIFICADO",
+                    "dePesquisa": npu,
+                },
             )
+            pagina_segundo_grau.raise_for_status()
+            
             soup_pagina_segundo_grau = bs(
-                pagina_segundo_grau.content, features="html.parser"
+                pagina_segundo_grau.text, features="html.parser"
             )
             if soup_pagina_segundo_grau.find("td", id="mensagemRetorno"):
                 soup_pagina_segundo_grau = None
             elif soup_pagina_segundo_grau.find("input", id="processoSelecionado"):
                 codigo = self.get_codigo_segunda_instancia(soup_pagina_segundo_grau)
-                pagina_segundo_grau = session.get(
-                    f"{self.urlconsulta_CE_segundo_grau_2}{codigo}",
-                    verify=False,
-                    timeout=self.timeout,
+                pagina_segundo_grau = await self.client.get(
+                    self.urlconsulta_CE_segundo_grau_2,
+                    params={"processo.codigo": codigo},
                 )
+                pagina_segundo_grau.raise_for_status()
+                
                 soup_pagina_segundo_grau = bs(
-                    pagina_segundo_grau.content, features="html.parser"
+                    pagina_segundo_grau.text, features="html.parser"
                 )
 
         segundo_grau_processo_info = self.extract_processo_info(
             soup_pagina_segundo_grau, npu, grau
         )
-        
+
         return segundo_grau_processo_info
 
     def extract_partes(self, pagina: bs) -> list[str, str, list]:
@@ -196,7 +232,7 @@ class Crawler:
                     remove_blank_space(movimentacao.text)
                     == "Não há Movimentações para este processo."
                 ):
-                    movimentacao = None
+                    movimentacao = []
                     return movimentacao
                 else:
                     try:
@@ -242,8 +278,10 @@ class Crawler:
         return movimentos
 
     def extract_processo_info(self, pagina: bs, npu: str, grau: str) -> dict:
-        #TODO arrumar scraping de movimentos do segundo grau SAJ mudou
+        # TODO arrumar scraping de movimentos do segundo grau SAJ mudou
         """ """
+        if pagina is None:
+            return None
         try:
             if grau == "1":
                 classe = pagina.find("span", {"id": "classeProcesso"}).get_text(
@@ -264,12 +302,12 @@ class Crawler:
                 data_distribuicao = pagina.find(
                     "div", {"id": "dataHoraDistribuicaoProcesso"}
                 ).get_text(strip=True)
-            else:    
-                data_distribuicao=''
+            else:
+                data_distribuicao = ""
             if pagina.find("span", {"id": "juizProcesso"}) is not None:
                 juiz = pagina.find("span", {"id": "juizProcesso"}).get_text(strip=True)
             else:
-                juiz=''
+                juiz = ""
             if pagina.find("div", {"id": "valorAcaoProcesso"}) is not None:
                 valor_da_acao = (
                     pagina.find("div", {"id": "valorAcaoProcesso"})
@@ -277,21 +315,49 @@ class Crawler:
                     .replace(" ", "")
                 )
             else:
-                valor_da_acao = ""    
+                valor_da_acao = ""
             partes_list = self.extract_partes(pagina)
             movimentos = self.extract_movimentos(pagina)
 
-            return Processo(npu,grau,juiz,assunto,classe,area,data_distribuicao,valor_da_acao,partes_list,movimentos) 
+            return Processo(
+                npu,
+                grau,
+                juiz,
+                assunto,
+                classe,
+                area,
+                data_distribuicao,
+                valor_da_acao,
+                partes_list,
+                movimentos,
+            )
         except Exception as exc:
             logger.exception(exc)
             raise
 
 
-if __name__ == "__main__":
+
+async def main():
     robo = Crawler()
+    try:
+
+        tribunal = extract_tribunal("00703379120088060001")
+
+        primeiro = await robo.send_request_primeiro_grau("00703379120088060001", tribunal)
+        print(primeiro.__dict__ if primeiro else None)
+
+        segundo = await robo.send_request_segundo_grau("00703379120088060001", tribunal)
+        print(segundo.__dict__ if segundo else None)
+
+    finally:
+        await robo.client.close()
+
+if __name__ == "__main__":
+    asyncio.run(main())        
+
     # AL-code 07108025520188020001
     # AL-nocode 08033402420198020000
-    #TJCE - 00703379120088060001
+    # TJCE - 00703379120088060001
     # 0805757-08.2023.8.02.0000
     # 07114332320238020001
     # tribunal = extract_tribunal("07108025520188020001")
@@ -301,12 +367,3 @@ if __name__ == "__main__":
     # print(primeiro_grau_info)
     # segundo_grau_info = robo.send_request_segundo_grau("07108025520188020001", tribunal)
     # print(segundo_grau_info)
-
-    tribunal = extract_tribunal("00703379120088060001")
-    primeiro_grau_info = robo.send_request_primeiro_grau(
-         "00703379120088060001", tribunal
-    )
-    print(primeiro_grau_info)
-    segundo_grau_info = robo.send_request_segundo_grau("00703379120088060001", tribunal)
-    print(segundo_grau_info)
-    print("terminado")
